@@ -1,0 +1,15 @@
+# Hotel Guest ID Manager — APK Project
+
+This project packages the V3 Secure Single App HTML prototype as an Android app using Capacitor.
+
+## Important
+- Keep this GitHub repository **Private**.
+- The Android signing keystore must never be committed.
+- The current app remains offline-first and stores its data locally.
+- The HTML prototype's security disclaimer still applies: client-side/offline HTML/JS cannot provide unbreakable anti-tamper protection.
+- For the commercial release, use a signed APK and strengthen the license system.
+
+## Build on GitHub Actions
+The workflow in `.github/workflows/android.yml` installs dependencies, creates the Android platform, syncs the web app, builds a debug APK, and uploads the APK as an artifact.
+
+The workflow is intended as a starting point; release signing should be added only after the private keystore is securely configured in GitHub Secrets.

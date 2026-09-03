@@ -1,0 +1,17 @@
+{
+  "name": "hotel-guest-id-manager",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "echo Static HTML app - no build step required",
+    "cap:sync": "npx cap sync android",
+    "cap:open": "npx cap open android"
+  },
+  "dependencies": {
+    "@capacitor/core": "^7.4.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.4.3",
+    "@capacitor/android": "^7.4.3"
+  }
+}
