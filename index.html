@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Hotel Guest ID Manager V3 Secure Single App</title>
+<style>
+:root{--p:#0f766e;--p2:#115e59;--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#667085;--danger:#c62828;--ok:#15803d;--border:#dbe2ea;--shadow:0 8px 24px #00000012}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text)}
+header{background:linear-gradient(135deg,var(--p2),var(--p));color:white;padding:18px 16px;position:sticky;top:0;z-index:5;box-shadow:var(--shadow)}
+header h1{font-size:21px;margin:0}header small{opacity:.85}
+main{max-width:1150px;margin:auto;padding:18px}.hidden{display:none!important}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow);margin-bottom:15px}
+.stat{font-size:28px;font-weight:800}.muted{color:var(--muted);font-size:13px}
+h2,h3{margin:4px 0 14px}label{display:block;font-size:13px;font-weight:700;margin:10px 0 5px}
+input,select,textarea{width:100%;padding:11px 12px;border:1px solid #cbd5e1;border-radius:9px;background:white;font:inherit}
+textarea{min-height:80px;resize:vertical}button{border:0;border-radius:9px;padding:11px 14px;font-weight:750;cursor:pointer;background:var(--p);color:white}
+button.secondary{background:#e8eef3;color:#172033}button.danger{background:var(--danger)}button.warn{background:#b45309}
+button.small{padding:7px 9px;font-size:12px}.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.center{min-height:78vh;display:grid;place-items:center}.login{width:min(460px,100%)}
+.notice{padding:12px;border-radius:10px;background:#eff6ff;border:1px solid #bfdbfe;margin:10px 0;font-size:13px}
+.err{color:var(--danger);font-size:13px;margin-top:8px}.ok{color:var(--ok);font-size:13px;margin-top:8px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:top}th{background:#f8fafc}
+.tablewrap{overflow:auto}.badge{display:inline-block;padding:4px 8px;border-radius:99px;font-size:11px;font-weight:800}.active{background:#dcfce7;color:#166534}.expired{background:#fee2e2;color:#991b1b}.pending{background:#fef3c7;color:#92400e}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.tabs{display:flex;gap:8px;overflow:auto;margin-bottom:15px}.tabs button{white-space:nowrap}.tabs button.secondary{background:white;border:1px solid var(--border)}
+.thumb{width:90px;height:65px;object-fit:cover;border:1px solid var(--border);border-radius:7px}
+.modal{position:fixed;inset:0;background:#0008;display:grid;place-items:center;padding:16px;z-index:20}.modalbox{background:white;border-radius:14px;max-width:800px;width:100%;max-height:90vh;overflow:auto;padding:18px}
+.key{font-family:ui-monospace,monospace;font-size:20px;font-weight:900;letter-spacing:1px;background:#f1f5f9;padding:14px;border-radius:10px;text-align:center}
+footer{padding:20px;text-align:center;color:var(--muted);font-size:12px}
+@media(max-width:800px){.grid{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}main{padding:12px}}
+@media(max-width:480px){.grid{grid-template-columns:1fr 1fr}.stat{font-size:22px}th,td{padding:8px 5px}}
+</style>
+</head>
+<body>
+<header><h1>Hotel Guest ID Manager — V3 Secure Prototype</h1><small>Single App • Admin + Hotel Manager • Offline • Activation & Subscription Licensing</small></header>
+<main id="app"></main>
+<footer>Offline prototype. Guest data remains local to this browser/device. Regular backups are strongly recommended. Pure HTML/JS cannot provide unbreakable anti-tamper security; final APK should be signed and use stronger license verification.</footer>
+
+<script>
+'use strict';
+const DB_NAME='HGIM_V3', DB_VER=1;
+let db, currentUser=null, currentHotel=null;
+
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid=()=>crypto.randomUUID?crypto.randomUUID():Date.now().toString(36)+Math.random().toString(36).slice(2);
+const nowISO=()=>new Date().toISOString().slice(0,16);
+const today=new Date().toISOString().slice(0,10);
+const fmt=d=>d?new Date(d).toLocaleString():'—';
+
+function openDB(){
+ return new Promise((res,rej)=>{
+  const r=indexedDB.open(DB_NAME,DB_VER);
+  r.onupgradeneeded=e=>{
+   const d=e.target.result;
+   if(!d.objectStoreNames.contains('config'))d.createObjectStore('config',{keyPath:'key'});
+   if(!d.objectStoreNames.contains('hotels'))d.createObjectStore('hotels',{keyPath:'id'});
+   if(!d.objectStoreNames.contains('guests')){let s=d.createObjectStore('guests',{keyPath:'id'});s.createIndex('hotelId','hotelId');}
+  };
+  r.onsuccess=e=>{db=e.target.result;res(db)};r.onerror=()=>rej(r.error)
+ })
+}
+function tx(store,mode='readonly'){return db.transaction(store,mode).objectStore(store)}
+function get(store,key){return new Promise((res,rej)=>{let r=tx(store).get(key);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+function all(store){return new Promise((res,rej)=>{let r=tx(store).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+function put(store,obj){return new Promise((res,rej)=>{let r=tx(store,'readwrite').put(obj);r.onsuccess=()=>res(obj);r.onerror=()=>rej(r.error)})}
+function del(store,key){return new Promise((res,rej)=>{let r=tx(store,'readwrite').delete(key);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
+
+async function hashPassword(p,salt){
+ const enc=new TextEncoder();
+ const material=await crypto.subtle.importKey('raw',enc.encode(p),'PBKDF2',false,['deriveBits']);
+ const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt:enc.encode(salt),iterations:120000,hash:'SHA-256'},material,256);
+ return [...new Uint8Array(bits)].map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+const salt=()=>crypto.getRandomValues(new Uint8Array(16)).reduce((a,x)=>a+x.toString(16).padStart(2,'0'),'');
+async function makePass(p){let s=salt();return {salt:s,hash:await hashPassword(p,s)}}
+async function checkPass(p,o){return !!o && (await hashPassword(p,o.salt))===o.hash}
+function randomKey(){
+ const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+ let a='HGIM';
+ for(let i=0;i<16;i++){if(i%4===0)a+='-';a+=chars[Math.floor(Math.random()*chars.length)]}
+ return a;
+}
+function installId(){let x=localStorage.getItem('HGIM_INSTALL_ID');if(!x){x='INST-'+uid().replaceAll('-','').slice(0,20).toUpperCase();localStorage.setItem('HGIM_INSTALL_ID',x)}return x}
+function datePlus(plan,start=new Date()){
+ let d=new Date(start);
+ if(plan==='1M')d.setMonth(d.getMonth()+1);
+ if(plan==='1Y')d.setFullYear(d.getFullYear()+1);
+ if(plan==='2Y')d.setFullYear(d.getFullYear()+2);
+ return d.toISOString();
+}
+function planName(p){return p==='1M'?'1 Month — ₹500':p==='1Y'?'1 Year — ₹4,500':'2 Years — ₹8,000'}
+function isExpired(h){return h?.status==='active' && new Date(h.expiryAt)<new Date()}
+function effectiveStatus(h){if(h.status==='pending')return 'pending';return isExpired(h)?'expired':'active'}
+
+async function init(){
+ await openDB();
+ const cfg=await get('config','admin');
+ if(!cfg){showSetup();}else{showHome();}
+}
+function shell(content){$('app').innerHTML=content}
+function showSetup(){
+ shell(`<div class="center"><div class="card login">
+ <h2>First-time Admin Setup</h2><div class="notice">Create your private Admin password and recovery PIN. No public/default admin password is built in.</div>
+ <label>Admin Password</label><input id="ap" type="password" autocomplete="new-password">
+ <label>Confirm Password</label><input id="ap2" type="password" autocomplete="new-password">
+ <label>Recovery PIN</label><input id="pin" type="password" inputmode="numeric" maxlength="12">
+ <label>Confirm Recovery PIN</label><input id="pin2" type="password" inputmode="numeric" maxlength="12">
+ <div id="msg" class="err"></div><div class="actions"><button onclick="createAdmin()">Create Admin</button></div>
+ </div></div>`)
+}
+async function createAdmin(){
+ let p=$('ap').value,p2=$('ap2').value,pin=$('pin').value,pin2=$('pin2').value;
+ if(p.length<6)return $('msg').textContent='Admin password must be at least 6 characters.';
+ if(p!==p2)return $('msg').textContent='Passwords do not match.';
+ if(pin.length<4||pin!==pin2)return $('msg').textContent='Recovery PIN must match and be at least 4 characters.';
+ let ph=await makePass(p), ph2=await makePass(pin);
+ await put('config',{key:'admin',password:ph,recovery:ph2,createdAt:new Date().toISOString()});
+ showHome();
+}
+function showHome(){
+ currentUser=null;currentHotel=null;
+ shell(`<div class="center"><div class="card login">
+ <h2>Hotel Guest ID Manager</h2><p class="muted">Choose portal</p>
+ <div class="actions"><button onclick="showAdminLogin()">Admin Login</button><button class="secondary" onclick="showManagerLogin()">Hotel Manager Login</button></div>
+ <div class="notice"><b>Owner Security:</b> Admin functions are owner-only. Manager accounts cannot enter the Admin panel or generate activation keys. Each hotel requires an Admin-generated activation key and local installation binding.</div>
+ </div></div>`)
+}
+function showAdminLogin(){
+ shell(`<div class="center"><div class="card login"><h2>Admin Login — Owner Only</h2>
+ <label>Admin Password</label><input id="pw" type="password" autocomplete="current-password">
+ <div id="msg" class="err"></div><div class="actions"><button onclick="adminLogin()">Login</button><button class="secondary" onclick="showHome()">Back</button><button class="secondary" onclick="showAdminForgot()">Forgot Password</button></div>
+ </div></div>`)
+}
+async function adminLogin(){
+ currentUser=null;currentHotel=null;
+ let c=await get('config','admin');
+ if(await checkPass($('pw').value,c.password)){currentUser='admin';showAdmin();}else $('msg').textContent='Wrong admin password.';
+}
+function showAdminForgot(){
+ shell(`<div class="center"><div class="card login"><h2>Admin Password Reset</h2>
+ <div class="notice">Enter the Recovery PIN created during first-time setup.</div>
+ <label>Recovery PIN</label><input id="rp" type="password" inputmode="numeric">
+ <label>New Admin Password</label><input id="np" type="password">
+ <label>Confirm New Password</label><input id="np2" type="password">
+ <div id="msg" class="err"></div><div class="actions"><button onclick="resetAdmin()">Reset Password</button><button class="secondary" onclick="showAdminLogin()">Back</button></div></div></div>`)
+}
+async function resetAdmin(){
+ let c=await get('config','admin');
+ if(!await checkPass($('rp').value,c.recovery))return $('msg').textContent='Wrong recovery PIN.';
+ if($('np').value.length<6||$('np').value!==$('np2').value)return $('msg').textContent='New passwords must match and be at least 6 characters.';
+ c.password=await makePass($('np').value);await put('config',c);showAdminLogin();
+}
+async function showAdmin(){
+ if(currentUser!=='admin')return showAdminLogin();
+ let hs=await all('hotels'), active=hs.filter(h=>effectiveStatus(h)==='active').length, expired=hs.filter(h=>effectiveStatus(h)==='expired').length;
+ shell(`<div class="topbar"><div><h2>Admin Control Panel</h2><span class="muted">Installation: ${esc(installId())}</span></div><div class="actions"><button onclick="showAddHotel()">＋ Add New Hotel</button><button class="secondary" onclick="showAdminSettings()">Security</button><button class="secondary" onclick="backupAll()">Full Backup</button><button class="secondary" onclick="document.querySelector('#restoreFile').click()">Restore</button><button class="secondary" onclick="showHome()">Logout</button></div></div>
+ <input id="restoreFile" class="hidden" type="file" accept=".json" onchange="restoreAll(this.files[0])">
+ <div class="grid"><div class="card"><div class="stat">${hs.length}</div><div class="muted">Total Hotels</div></div><div class="card"><div class="stat">${active}</div><div class="muted">Active</div></div><div class="card"><div class="stat">${expired}</div><div class="muted">Expired</div></div><div class="card"><div class="stat">${hs.filter(h=>h.status==='pending').length}</div><div class="muted">Pending Activation</div></div></div>
+ <div class="card"><h3>Registered Hotels</h3><div class="tablewrap"><table><thead><tr><th>Hotel</th><th>Manager</th><th>Plan</th><th>Subscription</th><th>Activation</th><th>Install</th><th>Actions</th></tr></thead><tbody>
+ ${hs.length?hs.map(h=>hotelRow(h)).join(''):`<tr><td colspan="7" class="muted">No hotels yet. Click “Add New Hotel”.</td></tr>`}
+ </tbody></table></div></div>`)
+}
+function hotelRow(h){
+ let st=effectiveStatus(h);
+ return `<tr><td><b>${esc(h.name)}</b><br><span class="muted">${esc(h.owner||'')}</span></td>
+ <td>${esc(h.managerId)}<br>${esc(h.mobile||'')}</td><td>${planName(h.plan)}</td>
+ <td><span class="badge ${st}">${st.toUpperCase()}</span><br>${fmt(h.startAt)} → ${fmt(h.expiryAt)}</td>
+ <td><b>${esc(h.activationKey)}</b><br><span class="muted">${h.activationUsed?'Activated':'Not activated'}</span></td>
+ <td><span class="muted">${esc(h.boundInstallId||'Not bound')}</span></td>
+ <td><div class="actions"><button class="small" onclick="showLicense('${h.id}')">Key</button><button class="small" onclick="renewHotel('${h.id}')">Renew</button><button class="small warn" onclick="resetManager('${h.id}')">Reset PW</button><button class="small secondary" onclick="resetInstall('${h.id}')">Reset Install</button><button class="small secondary" onclick="hotelGuests('${h.id}')">Guests</button></div></td></tr>`
+}
+function showAddHotel(existing=null){
+ let h=existing||{};
+ shell(`<div class="card"><div class="topbar"><h2>${existing?'Edit Hotel':'Add New Hotel'}</h2><button class="secondary" onclick="showAdmin()">Back</button></div>
+ <div class="grid2"><div><label>Hotel Name *</label><input id="hn" value="${esc(h.name)}"></div><div><label>Owner / Manager Name</label><input id="owner" value="${esc(h.owner)}"></div>
+ <div><label>Manager Mobile</label><input id="mob" inputmode="tel" value="${esc(h.mobile)}"></div><div><label>Manager ID *</label><input id="mid" value="${esc(h.managerId)}" ${existing?'readonly':''}></div>
+ <div><label>${existing?'New Manager Password (optional)':'Temporary Manager Password *'}</label><input id="mp" type="password" autocomplete="new-password"></div>
+ <div><label>Subscription Plan *</label><select id="plan"><option value="1M" ${h.plan==='1M'?'selected':''}>1 Month — ₹500</option><option value="1Y" ${h.plan==='1Y'?'selected':''}>1 Year — ₹4,500</option><option value="2Y" ${h.plan==='2Y'?'selected':''}>2 Years — ₹8,000</option></select></div></div>
+ ${existing?`<div class="notice">Editing does not erase guest records. Subscription renewal extends the existing hotel's access.</div>`:`<div class="notice"><b>Workflow:</b> Save hotel → Generate unique activation key → give Manager ID + temporary password + activation key to the hotel.</div>`}
+ <div id="msg" class="err"></div><div class="actions"><button onclick="${existing?`saveHotelEdit('${h.id}')`:'createHotel()'}">${existing?'Save Changes':'Generate Activation Key & Register Hotel'}</button></div></div>`)
+}
+async function createHotel(){
+ let name=$('hn').value.trim(),mid=$('mid').value.trim(),p=$('mp').value,plan=$('plan').value;
+ if(!name||!mid||p.length<6)return $('msg').textContent='Hotel name, Manager ID and password (6+ chars) are required.';
+ let allh=await all('hotels');if(allh.some(h=>h.managerId.toLowerCase()===mid.toLowerCase()))return $('msg').textContent='Manager ID already exists.';
+ let ph=await makePass(p), start=new Date(), h={id:uid(),name,owner:$('owner').value.trim(),mobile:$('mob').value.trim(),managerId:mid,managerPassword:ph,plan,startAt:start.toISOString(),expiryAt:datePlus(plan,start),activationKey:randomKey(),activationUsed:false,boundInstallId:null,status:'pending',createdAt:start.toISOString()};
+ await put('hotels',h);showLicense(h.id);
+}
+async function saveHotelEdit(id){
+ let h=await get('hotels',id);h.name=$('hn').value.trim();h.owner=$('owner').value.trim();h.mobile=$('mob').value.trim();
+ if($('mp').value)h.managerPassword=await makePass($('mp').value);
+ await put('hotels',h);showAdmin();
+}
+async function showLicense(id){
+ let h=await get('hotels',id);
+ shell(`<div class="center"><div class="card login"><h2>Activation License</h2>
+ <div class="notice"><b>Give these details to this hotel:</b><br>1. Manager ID<br>2. Temporary Manager Password<br>3. Activation Key</div>
+ <label>Hotel</label><input value="${esc(h.name)}" readonly><label>Manager ID</label><input value="${esc(h.managerId)}" readonly>
+ <label>Activation Key</label><div class="key">${esc(h.activationKey)}</div>
+ <label>Subscription</label><input value="${planName(h.plan)} | ${fmt(h.startAt)} → ${fmt(h.expiryAt)}" readonly>
+ <label>Installation binding</label><input value="${esc(h.boundInstallId||'Will bind on first activation')}" readonly>
+ <div class="actions"><button onclick="copyText('${h.activationKey}')">Copy Key</button><button class="secondary" onclick="printLicense('${h.id}')">Print / Save PDF</button><button class="secondary" onclick="showAdmin()">Admin Panel</button></div></div></div>`)
+}
+function copyText(x){navigator.clipboard?.writeText(x).then(()=>alert('Copied: '+x)).catch(()=>prompt('Copy activation key:',x))}
+function printLicense(id){
+ get('hotels',id).then(h=>{let w=open('','_blank');w.document.write(`<html><body style="font-family:Arial;padding:35px"><h1>Hotel Guest ID Manager — Activation License</h1><h2>${esc(h.name)}</h2><p><b>Manager ID:</b> ${esc(h.managerId)}</p><p><b>Activation Key:</b></p><h2>${esc(h.activationKey)}</h2><p><b>Plan:</b> ${planName(h.plan)}</p><p><b>Valid:</b> ${fmt(h.startAt)} to ${fmt(h.expiryAt)}</p><p>Keep this license information private.</p><script>print()<\/script></body></html>`);w.document.close()})
+}
+async function renewHotel(id){
+ let h=await get('hotels',id);let plan=prompt('Renew plan: 1M = ₹500, 1Y = ₹4,500, 2Y = ₹8,000',h.plan||'1Y');if(!['1M','1Y','2Y'].includes(plan))return;
+ let base=new Date(h.expiryAt)>new Date()?new Date(h.expiryAt):new Date();h.plan=plan;h.startAt=new Date().toISOString();h.expiryAt=datePlus(plan,base);h.status='active';h.activationUsed=true;await put('hotels',h);showLicense(id);
+}
+async function resetManager(id){
+ let h=await get('hotels',id),p=prompt('Set a new Manager password (minimum 6 characters):');if(!p)return;if(p.length<6)return alert('Minimum 6 characters.');
+ h.managerPassword=await makePass(p);await put('hotels',h);alert('Manager password reset successfully. Give the new password to the hotel manager.');showAdmin();
+}
+async function resetInstall(id){
+ let h=await get('hotels',id);if(!confirm('Reset installation binding? The hotel will need to activate again on its next device/browser. Guest data is not deleted.'))return;
+ h.boundInstallId=null;h.activationUsed=false;h.status='pending';await put('hotels',h);showLicense(id);
+}
+async function hotelGuests(id){
+ let gs=(await all('guests')).filter(g=>g.hotelId===id);let h=await get('hotels',id);
+ shell(`<div class="card"><div class="topbar"><h2>${esc(h.name)} — Guest Records</h2><button class="secondary" onclick="showAdmin()">Back</button></div>
+ <p class="muted">Total records: ${gs.length}</p><div class="tablewrap"><table><thead><tr><th>Date</th><th>Name</th><th>Mobile</th><th>Room</th><th>Register/ID</th></tr></thead><tbody>${gs.map(g=>`<tr><td>${fmt(g.checkIn)}</td><td>${esc(g.name)}</td><td>${esc(g.mobile)}</td><td>${esc(g.room)}</td><td>${esc(g.regNo)}</td></tr>`).join('')}</tbody></table></div></div>`)
+}
+function showManagerLogin(){
+ shell(`<div class="center"><div class="card login"><h2>Hotel Manager Login</h2>
+ <label>Manager ID</label><input id="mid">
+ <label>Password</label><input id="pw" type="password" autocomplete="current-password">
+ <div id="msg" class="err"></div><div class="actions"><button onclick="managerLogin()">Login</button><button class="secondary" onclick="showHome()">Back</button><button class="secondary" onclick="showManagerForgot()">Forgot Password</button></div>
+ </div></div>`)
+}
+async function managerLogin(){
+ currentUser=null;currentHotel=null;
+ let mid=$('mid').value.trim(),h=(await all('hotels')).find(x=>x.managerId.toLowerCase()===mid.toLowerCase());
+ if(!h)return $('msg').textContent='Manager ID not found.';
+ if(!await checkPass($('pw').value,h.managerPassword))return $('msg').textContent='Wrong password.';
+ currentHotel=h;
+ if(effectiveStatus(h)==='expired')return showLocked(h);
+ if(h.status==='pending')return showActivation(h);
+ currentUser='manager';showManager();
+}
+function showActivation(h){
+ shell(`<div class="center"><div class="card login"><h2>Activate This Hotel</h2>
+ <div class="notice">This hotel is registered by Admin but is not yet activated on this browser/device.<br><b>Installation ID:</b> ${esc(installId())}</div>
+ <label>Manager ID</label><input id="mid" value="${esc(h.managerId)}" readonly>
+ <label>Activation Key</label><input id="key" placeholder="HGIM-XXXX-XXXX-XXXX-XXXX">
+ <label>Temporary Manager Password</label><input id="pw" type="password">
+ <div id="msg" class="err"></div><div class="actions"><button onclick="activateHotel('${h.id}')">Activate Hotel</button><button class="secondary" onclick="showHome()">Cancel</button></div>
+ </div></div>`)
+}
+async function activateHotel(id){
+ let h=await get('hotels',id);
+ if($('key').value.trim().toUpperCase()!==h.activationKey)return $('msg').textContent='Invalid activation key.';
+ if(!await checkPass($('pw').value,h.managerPassword))return $('msg').textContent='Temporary password is incorrect.';
+ if(h.boundInstallId && h.boundInstallId!==installId())return $('msg').textContent='This activation key is already bound to another installation. Ask Admin to Reset Installation.';
+ h.boundInstallId=installId();h.activationUsed=true;h.status='active';await put('hotels',h);currentHotel=h;showManager();
+}
+function showLocked(h){
+ shell(`<div class="center"><div class="card login"><h2>Subscription Expired</h2><div class="notice">Hotel: <b>${esc(h.name)}</b><br>Expiry: <b>${fmt(h.expiryAt)}</b><br><br>Guest data is still stored locally and is not deleted.</div><p class="muted">Ask the software Admin to renew the subscription. After renewal, the same hotel account and old guest records will become accessible again.</p><div class="actions"><button onclick="showHome()">Back</button></div></div></div>`)
+}
+function showManager(){
+ if(currentUser!=='manager' || !currentHotel)return showManagerLogin();
+ let h=currentHotel;
+ if(effectiveStatus(h)!=='active')return effectiveStatus(h)==='expired'?showLocked(h):showActivation(h);
+ shell(`<div class="topbar"><div><h2>${esc(h.name)}</h2><span class="muted">Manager ID: ${esc(h.managerId)} • Valid till ${fmt(h.expiryAt)}</span></div><div class="actions"><button class="secondary" onclick="managerBackup()">Backup</button><button class="secondary" onclick="document.querySelector('#mrestore').click()">Restore</button><button class="secondary" onclick="showManagerSettings()">Security</button><button class="secondary" onclick="showHome()">Logout</button></div></div>
+ <input id="mrestore" class="hidden" type="file" accept=".json" onchange="restoreHotel(this.files[0])">
+ <div class="tabs"><button onclick="managerTab('dashboard')">Dashboard</button><button onclick="managerTab('new')">＋ New Guest</button><button onclick="managerTab('search')">Search Guest</button><button onclick="managerTab('bulk')">Wedding / Bulk</button></div>
+ <section id="mcontent"></section>`)
+ managerTab('dashboard');
+}
+async function managerTab(tab){
+ if(effectiveStatus(currentHotel)!=='active')return showLocked(currentHotel);
+ let gs=(await all('guests')).filter(g=>g.hotelId===currentHotel.id);
+ if(tab==='dashboard'){
+  let td=gs.filter(g=>String(g.checkIn).slice(0,10)===today).length, month=gs.filter(g=>String(g.checkIn).slice(0,7)===today.slice(0,7)).length;
+  $('mcontent').innerHTML=`<div class="grid"><div class="card"><div class="stat">${td}</div><div class="muted">Today's Check-ins</div></div><div class="card"><div class="stat">${month}</div><div class="muted">This Month</div></div><div class="card"><div class="stat">${gs.length}</div><div class="muted">Total Guests</div></div><div class="card"><div class="stat">${Math.max(0,Math.ceil((new Date(currentHotel.expiryAt)-new Date())/86400000))}</div><div class="muted">Days Remaining</div></div></div>
+  <div class="card"><h3>Recent Guest Check-ins</h3>${guestTable(gs.slice().sort((a,b)=>b.checkIn.localeCompare(a.checkIn)).slice(0,10))}</div>`;
+ } else if(tab==='new') newGuestForm();
+ else if(tab==='search') searchGuests(gs);
+ else bulkForm();
+}
+function newGuestForm(){
+ $('mcontent').innerHTML=`<div class="card"><h3>New Guest Check-in</h3><div class="grid2">
+ <div><label>Guest Name *</label><input id="gn"></div><div><label>Room / Bed</label><input id="room"></div>
+ <div><label>Mobile Number</label><input id="gmob" inputmode="tel"></div><div><label>Register / ID Number</label><input id="reg"></div>
+ <div><label>Check-in Date & Time *</label><input id="dt" type="datetime-local" value="${nowISO()}"></div><div><label>Address</label><textarea id="addr"></textarea></div>
+ <div><label>ID Front — Camera / Gallery</label><input id="front" type="file" accept="image/*" capture="environment"></div>
+ <div><label>ID Back — Camera / Gallery</label><input id="back" type="file" accept="image/*" capture="environment"></div></div>
+ <div id="msg" class="err"></div><div class="actions"><button onclick="saveGuest()">Save Guest</button><button class="secondary" onclick="managerTab('dashboard')">Cancel</button></div></div>`
+}
+function fileData(input){return new Promise(res=>{let f=input.files?.[0];if(!f)return res('');let r=new FileReader();r.onload=()=>res(r.result);r.readAsDataURL(f)})}
+async function saveGuest(){
+ let name=$('gn').value.trim();if(!name)return $('msg').textContent='Guest name is required.';
+ let g={id:uid(),hotelId:currentHotel.id,name,room:$('room').value.trim(),mobile:$('gmob').value.trim(),regNo:$('reg').value.trim(),address:$('addr').value.trim(),checkIn:$('dt').value,front:await fileData($('front')),back:await fileData($('back')),createdAt:new Date().toISOString()};
+ await put('guests',g);alert('Guest saved successfully.');managerTab('dashboard');
+}
+function searchGuests(gs){
+ $('mcontent').innerHTML=`<div class="card"><h3>Search Guest</h3><input id="q" placeholder="Name, mobile, room, register/ID or address..." oninput="doSearch()"><div id="results" style="margin-top:12px"></div></div>`;
+ window._gs=gs;doSearch();
+}
+function doSearch(){
+ let q=$('q').value.toLowerCase().trim(),a=window._gs.filter(g=>!q||[g.name,g.mobile,g.room,g.regNo,g.address].join(' ').toLowerCase().includes(q));
+ $('results').innerHTML=guestTable(a);
+}
+function guestTable(gs){
+ if(!gs.length)return '<p class="muted">No guest records found.</p>';
+ return `<div class="tablewrap"><table><thead><tr><th>Date/Time</th><th>Guest</th><th>Mobile</th><th>Room</th><th>ID No.</th><th>Action</th></tr></thead><tbody>${gs.map(g=>`<tr><td>${fmt(g.checkIn)}</td><td><b>${esc(g.name)}</b><br><span class="muted">${esc(g.address)}</span></td><td>${esc(g.mobile)}</td><td>${esc(g.room)}</td><td>${esc(g.regNo)}</td><td><button class="small" onclick="guestDetail('${g.id}')">View</button></td></tr>`).join('')}</tbody></table></div>`
+}
+async function guestDetail(id){
+ let g=await get('guests',id);if(!g)return;
+ $('app').insertAdjacentHTML('beforeend',`<div class="modal" id="guestModal"><div class="modalbox"><div class="topbar"><h2>Guest Record</h2><button class="secondary" onclick="$('guestModal').remove()">Close</button></div>
+ <div class="grid2"><div><b>Name</b><p>${esc(g.name)}</p><b>Mobile</b><p>${esc(g.mobile)}</p><b>Room</b><p>${esc(g.room)}</p><b>Register / ID</b><p>${esc(g.regNo)}</p><b>Check-in</b><p>${fmt(g.checkIn)}</p><b>Address</b><p>${esc(g.address)}</p></div><div><b>ID Front</b><br>${g.front?`<img class="thumb" style="width:100%;height:auto" src="${g.front}">`:'Not uploaded'}<br><br><b>ID Back</b><br>${g.back?`<img class="thumb" style="width:100%;height:auto" src="${g.back}">`:'Not uploaded'}</div></div>
+ <div class="actions"><button class="danger" onclick="deleteGuest('${g.id}')">Delete Record</button></div></div></div>`)
+}
+async function deleteGuest(id){if(confirm('Delete this guest record permanently?')){await del('guests',id);$('guestModal')?.remove();managerTab('search')}}
+function bulkForm(){
+ $('mcontent').innerHTML=`<div class="card"><h3>Wedding / Bulk Guest Entry</h3><div class="notice">For a wedding/group, enter multiple guests quickly. Each line becomes one guest record. Format: <b>Name | Mobile | Room | Register/ID | Address</b></div>
+ <label>Guest rows</label><textarea id="bulk" style="min-height:260px" placeholder="Rahul Patel | 9876543210 | 101 | ID123 | Vapi&#10;Amit Shah | 9988776655 | 102 | ID124 | Daman"></textarea>
+ <div id="msg" class="err"></div><div class="actions"><button onclick="saveBulk()">Save All Guests</button></div></div>`
+}
+async function saveBulk(){
+ let lines=$('bulk').value.split(/\\n+/).map(x=>x.trim()).filter(Boolean);if(!lines.length)return;
+ for(let line of lines){let p=line.split('|').map(x=>x.trim());await put('guests',{id:uid(),hotelId:currentHotel.id,name:p[0]||'Guest',mobile:p[1]||'',room:p[2]||'',regNo:p[3]||'',address:p[4]||'',checkIn:new Date().toISOString(),front:'',back:'',createdAt:new Date().toISOString()})}
+ alert(lines.length+' guest records saved.');managerTab('dashboard');
+}
+async function showManagerForgot(){
+ shell(`<div class="center"><div class="card login"><h2>Manager Forgot Password</h2><div class="notice">Admin must verify the hotel's manager ID and use the Admin Recovery PIN. This prototype does not store/reveal plaintext passwords.</div>
+ <label>Manager ID</label><input id="mid"><label>Admin Recovery PIN</label><input id="pin" type="password"><label>New Manager Password</label><input id="np" type="password"><label>Confirm New Password</label><input id="np2" type="password"><div id="msg" class="err"></div>
+ <div class="actions"><button onclick="forgotManager()">Reset Manager Password</button><button class="secondary" onclick="showManagerLogin()">Back</button></div></div></div>`)
+}
+async function forgotManager(){
+ let h=(await all('hotels')).find(x=>x.managerId.toLowerCase()===$('mid').value.trim().toLowerCase()),c=await get('config','admin');
+ if(!h)return $('msg').textContent='Manager ID not found.';
+ if(!await checkPass($('pin').value,c.recovery))return $('msg').textContent='Wrong Admin Recovery PIN.';
+ if($('np').value.length<6||$('np').value!==$('np2').value)return $('msg').textContent='Passwords must match and be 6+ characters.';
+ h.managerPassword=await makePass($('np').value);await put('hotels',h);alert('Manager password reset.');showManagerLogin();
+}
+function showManagerSettings(){
+ $('mcontent').innerHTML=`<div class="card"><h3>Change Manager Password</h3><label>Current Password</label><input id="old" type="password"><label>New Password</label><input id="new" type="password"><label>Confirm New Password</label><input id="new2" type="password"><div id="msg" class="err"></div><div class="actions"><button onclick="changeManagerPass()">Change Password</button></div></div>`
+}
+async function changeManagerPass(){
+ if(!await checkPass($('old').value,currentHotel.managerPassword))return $('msg').textContent='Current password is incorrect.';
+ if($('new').value.length<6||$('new').value!==$('new2').value)return $('msg').textContent='New passwords must match and be 6+ characters.';
+ currentHotel.managerPassword=await makePass($('new').value);await put('hotels',currentHotel);alert('Password changed.');
+}
+function showAdminSettings(){
+ shell(`<div class="card"><div class="topbar"><h2>Admin Security</h2><button class="secondary" onclick="showAdmin()">Back</button></div><h3>Change Admin Password</h3><label>Current Password</label><input id="old" type="password"><label>New Password</label><input id="new" type="password"><label>Confirm New Password</label><input id="new2" type="password"><label>Current Recovery PIN</label><input id="pin" type="password"><div id="msg" class="err"></div><div class="actions"><button onclick="changeAdminPass()">Save Security Changes</button></div></div>`)
+}
+async function changeAdminPass(){
+ let c=await get('config','admin');
+ if(!await checkPass($('old').value,c.password))return $('msg').textContent='Current password is incorrect.';
+ if(!await checkPass($('pin').value,c.recovery))return $('msg').textContent='Recovery PIN is incorrect.';
+ if($('new').value.length<6||$('new').value!==$('new2').value)return $('msg').textContent='New passwords must match and be 6+ characters.';
+ c.password=await makePass($('new').value);await put('config',c);alert('Admin password changed.');showAdmin();
+}
+async function backupAll(){
+ let data={format:'HGIM-V3-BACKUP',version:3,createdAt:new Date().toISOString(),installationId:installId(),config:await all('config'),hotels:await all('hotels'),guests:await all('guests')};
+ downloadJSON(data,'HGIM-V3-FULL-BACKUP.json');
+}
+async function managerBackup(){
+ let gs=(await all('guests')).filter(g=>g.hotelId===currentHotel.id);
+ let data={format:'HGIM-V3-HOTEL-BACKUP',version:3,createdAt:new Date().toISOString(),hotel:currentHotel,guests:gs};
+ downloadJSON(data,(currentHotel.name||'hotel').replace(/[^a-z0-9]+/gi,'_')+'-backup.json');
+}
+function downloadJSON(o,name){let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(o)],{type:'application/json'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+async function restoreAll(file){
+ if(!file)return;try{let o=JSON.parse(await file.text());if(o.format!=='HGIM-V3-BACKUP')throw Error('Invalid backup');
+ if(!confirm('Restore full backup? Existing records with the same IDs will be replaced.'))return;
+ for(const x of o.config||[])await put('config',x);for(const x of o.hotels||[])await put('hotels',x);for(const x of o.guests||[])await put('guests',x);alert('Full backup restored.');showAdmin();
+ }catch(e){alert('Restore failed: '+e.message)}
+}
+async function restoreHotel(file){
+ if(!file)return;try{let o=JSON.parse(await file.text());if(o.format!=='HGIM-V3-HOTEL-BACKUP'||o.hotel.id!==currentHotel.id)throw Error('Wrong hotel backup');
+ for(const x of o.guests||[])await put('guests',x);alert('Hotel guest backup restored.');showManager();
+ }catch(e){alert('Restore failed: '+e.message)}
+}
+init();
+</script>
+</body>
+</html>
